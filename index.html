@@ -1,0 +1,519 @@
+<!DOCTYPE html>
+  <meta charset="utf-8">
+  <style>
+
+    body {
+      font: 16px sans-serif;
+      margin: 0;
+      background-color: #EB4528;
+      opacity: 0.85;    
+    }
+
+    header {
+      position: relative;
+      padding: 40px 0 30px;
+    }
+
+    h1 {
+      font-size: 52px;
+      text-align: center;
+      margin-top: 0;
+    }
+
+    .pageWidth {
+      width: 100%;
+      margin: 0;
+    }
+
+    .center {
+      width: 1200px;
+      margin: 0 auto;
+      position: relative;
+    }
+
+    #credit {
+      position: absolute;
+      top: 60px;
+      right: 340px;
+    }
+
+    hr {
+      margin: 0;
+    }
+
+    #middle {
+      background-color: white;
+    }
+
+    svg {
+      margin: 0 auto;
+    }
+
+    .axis path,
+    .axis line {
+      fill: none;
+      stroke: #000;
+      shape-rendering: crispEdges;
+    }
+
+    .x.axis path {
+      display: none;
+    }
+
+    form.center {
+      width: 350px;
+      margin-top: 50px;
+    }
+
+    footer {
+      height: 100%;
+    }
+  </style>
+  <body>
+
+<!-- Introduction -->
+  <header class="pageWidth">
+    <div class="center">
+      <h1>Github Contributions</h1><span id="credit">by <a href="http://lukehatfield.com">luke hatfield</a></span>
+      <h2>A visual guide to who's been helping out. Made with live data.</h2>
+      <p>Choose a code repository (at bottom) to see the history of 7 most recent contributors. There is teamwork, and there are leaders. Mouse over the chart to learn more.</p>
+      <p>Every third date was aggregated to reduce gaps in the chart and increase readability. The gaps you see are mostly due to 0 contributions by the listed authors at that time.</p>
+    </div>
+  </header>
+
+  <hr>
+  <div id="middle" class="pageWidth">
+    <div id="content" class="center"></div>  
+  </div>
+  <hr>
+
+<!-- Repository buttons -->
+  <footer class="pageWidth">
+    <form class="center">
+      <fieldset>
+        <legend>Repository:</legend>
+        <label><input type="radio" name="repo" value="jquery" checked> jQuery</label>
+        <label><input type="radio" name="repo" value="normalize"> Normalize</label>
+        <label><input type="radio" name="repo" value="bootstrap"> Bootstrap</label>
+        <label><input type="radio" name="repo" value="d3"> D3</label>
+      </fieldset>
+    </form>
+  </footer>
+
+<!-- d3 -->
+  <script src="http://d3js.org/d3.v3.min.js"></script>
+  <script>
+
+/* Github Data */
+  // token
+  var TOKEN = "0903e28c2f13396fbc6387fcc6af3d8ff06c9e63";
+
+  var ghData = [],
+      commits = { list:[], dates:[], authors:[] },
+      authorTotals = {}, // for summing commits by author
+      masterData = [],
+      aggregateData = [];
+
+  var margin = {top: 100, right: 75, bottom: 30, left: 40},
+      width = 1200 - margin.left - margin.right,
+      height = 500 - margin.top - margin.bottom,
+      padding = 40;
+
+  var x0 = d3.scale.ordinal()
+      .rangeRoundBands([0, width], .1)
+
+  var x1 = d3.scale.ordinal();
+
+  var y = d3.scale.linear()
+      .range([height, 0]);
+
+  var color = d3.scale.ordinal()
+      .range(["#1F0CFF", "#105AE8", "#0CC5FF", "#14E8BE", "#0CFF61", "#2FE815", "#B2FF0C"]);
+
+  var xAxis = d3.svg.axis()
+      .scale(x0)
+      .orient("bottom")
+      .tickFormat(d3.time.format("%b %d, 20%y"));
+
+  var yAxis = d3.svg.axis()
+      .scale(y)
+      .orient("left");
+
+  // read in date format from github, convert to js object to be read by d3
+  var parseTime = d3.time.format("%Y-%m-%d").parse;
+
+  // declare globally b/c otherwise in function scope
+  var svg;
+
+  // let us begin...
+  setup('jquery/jquery');
+
+/* Setup */
+function setup(repo) {
+
+  // clear old data (as if coming from button click)
+  if(svg != undefined)
+    d3.select('svg')
+      .remove();
+
+  // wipe arrays clean
+  ghData = [],
+  commits = { list:[], dates:[], authors:[] },
+  authorTotals = {}, // for summing commits by author
+  masterData = [],
+  aggregateData = [];
+
+  // make new svg
+  svg = d3.select("#content").append("svg")
+          .attr("width", width + margin.left + margin.right)
+          .attr("height", height + margin.top + margin.bottom)
+          .append("g")
+            .attr("transform", "translate(" + margin.left + "," + margin.top + ")");
+
+  // make chart title
+    d3.select('svg').insert('text','g')
+           .attr('id', 'name')
+           .attr({
+               x: width/2,
+               y: 30,
+               'text-anchor': 'middle',
+               'font-family': 'sans-serif',
+               'font-size': '16px',
+               'font-weight': 'bold',
+               fill: 'black',
+               'pointer-events': 'none'
+           })
+           .text(repo);
+
+  // onward and upward
+  start(repo);
+}
+  // get all commits from Github and order data
+  function start(repo) {
+
+    // d3.json("twbs-bootstrap.json", function(allCommits) { 
+    d3.json("https://api.github.com/repos/" + repo + "/commits?per_page=100&access_token=" + TOKEN, function(allCommits) { 
+    // make clean list of all authors and all dates
+      commits.list = allCommits.map(function(d,i){
+        // remove time from date stamp
+        var cleanDate = d.commit.committer.date.slice(0,10);
+        // var cleanDate = d.commit.author.date.slice(0,10);
+        return {
+          date: cleanDate,
+          author: d.author.login // using login instead of author name b/c no spaces in login (and can use login as object name later)
+        };
+      });
+
+    // consolidate dates
+      commits.list.map(function(d,i){
+        // add current date to dates array if doesn't already have it
+        if(commits.dates.indexOf(d.date) == -1){
+            // convert to object before adding so axis will be happy
+            // var dateObject = parseTime(d.date);
+            // commits.dates.push(dateObject);        
+            commits.dates.push(d.date);        
+        }
+        // sort dates array
+        commits.dates.sort();
+      });
+
+    // keep 7 most recent authors
+      for(var i = 0; i < commits.list.length; i++){
+        if(commits.authors.indexOf(commits.list[i].author) == -1)
+        commits.authors.push(commits.list[i].author);
+
+      // stop at 7 authors      
+        if(commits.authors.length == 7)
+          break;
+      }
+      
+    // build master data array
+      // for each unique date...
+        commits.dates.map(function (d,i) {
+          // create new object
+          masterData.push({ date: d });
+        });
+
+      // build master data list with each object holding one date and all authors
+        masterData.forEach(function (d,i) {
+
+          // initialize all authors to 0 commits, and build in author name property to every date
+          commits.authors.forEach( function (e,j) {
+
+            // number of commits for one day
+            var commitCount = 0;
+
+            // initialize all authors to 0 commits
+            masterData[i][e] = commitCount;
+
+            // look at all commits
+            commits.list.forEach(function (f,k) {
+
+              // if commit matches day and author, increment commit count
+              if(d.date == f.date && e == f.author) {
+                // increment number of commits for this day
+                commitCount++;
+
+                // store current commit count under author's name
+                masterData[i][e] = commitCount;
+              }
+            });
+          });
+        });
+
+    // Convert dates to date objects for use in axis
+      commits.dates.forEach(function (d,i) {
+        // commits.dates[i] = parseTime(d);
+        masterData[i].date = parseTime(d);
+      });
+
+    // Build aggregate data object based on every 6 days
+      commits.dates.forEach(function (d,i) {
+        // take every 6th day
+        if(i%6 == 0)
+          aggregateData.push({ date: d });      
+      });
+
+      // Make a copy of master list to destroy
+      var tempData = masterData.slice(0);
+
+      // build aggregate data list for every 6 days
+        aggregateData.forEach(function (d,i) {
+
+          // initialize day counter
+          var day = 0;
+
+          // initialize all authors to 0 commits, and build in author name property to every date
+          commits.authors.forEach( function (e,j) {
+
+            // number of commits for one day
+            var commitCount = 0;
+
+            // initialize all author names to 0 commits
+            aggregateData[i][e] = commitCount;
+
+            // look at all days from masterData
+            // masterData.forEach(function (f,k) {
+            for(var k = 0; k<6;k++){
+
+              // if haven't run out of data
+              if(tempData[k] !== undefined){
+                // Increase commit count
+                commitCount = commitCount + tempData[k][e];
+
+                // store current commit count under author's name
+                aggregateData[i][e] = commitCount;  
+              }
+            }
+          });
+
+          // remove 1st 6 days in record
+          for(var l = 0; l < 6; l++){
+            tempData.shift();
+          }
+        })
+    
+    // Convert dates to date objects for use in axis
+      aggregateData.forEach(function (d,i) {
+        // commits.dates[i] = parseTime(d);
+        aggregateData[i].date = parseTime(aggregateData[i].date);
+      });
+
+      // continue when ajax request finished
+      dataReceived(aggregateData);
+    });
+  }
+
+  function dataReceived(dataToUse) {
+
+  // Build chart bar data
+    dataToUse.forEach(function(d) {
+      d.authors = commits.authors.map(function(name) { return {name: name, commits: +d[name], date: d.date }; });
+    });
+
+  /* Axes */
+    x0.domain(dataToUse.map(function(d) { return d.date; }));
+    x1.domain(commits.authors).rangeRoundBands([0, x0.rangeBand()]);
+    y.domain([0, d3.max(dataToUse, function(d) { return d3.max(d.authors, function(d) { return d.commits; }); })]);
+
+    svg.append("g")
+        .attr("class", "x axis")
+        .attr("transform", "translate(0," + height + ")")
+        .call(xAxis);
+
+    svg.append("g")
+        .attr("class", "y axis")
+        .call(yAxis)
+      .append("text")
+        .attr("transform", "rotate(-90)")
+        .attr("y", 6)
+        .attr("dy", ".71em")
+        .style("text-anchor", "end")
+        .text("Commits");
+
+  /* Bars */
+    var date = svg.selectAll(".date")
+        .data(dataToUse)
+      .enter().append("g")
+        .attr("class", "g")
+        .attr("transform", function(d) { return "translate(" + x0(d.date) + ",0)"; });
+
+    date.selectAll("rect")
+        .data(function(d) { return d.authors; })
+      .enter().append("rect")
+        // .attr('id','bar')
+        .attr("width", x1.rangeBand())
+        .attr("x", function(d) { return x1(d.name); })
+        .attr("y", function(d) { return y(d.commits); })
+        .attr("height", function(d) { return height - y(d.commits); })
+        .style("fill", function(d) { return color(d.name); })
+        .on('mouseover',function(d, i){
+          
+          // decrease opacity of other rectangles
+          d3.selectAll('rect')
+            .attr('opacity',function(e){
+              // if not current author, less opacity
+              if(e.name != d.name && e != d.name)
+              // if(e.name != d && e != d)
+                return 0.2;
+            });
+          
+        /* Show author and commit info on mouseover */
+          // Create the first line with author's name
+          firstLine(d.name);
+
+          // Create the second line with commit message
+          secondLine(d.commits, 'bar', d.date);
+
+        })
+        .on('mouseout',function(){
+          // Restore opacity to all rectangles on mouseout
+          d3.selectAll('rect')
+            .attr('opacity','1');
+          // Remove name to prepare for next message
+          d3.select('.authName')
+            .remove();
+          // Remove commits to prepare for next message
+          d3.select('.numCommits')
+            .remove();
+        });
+
+  /* Legend */
+
+  // for each author, tally their commits from available time frame
+    commits.authors.map(function (d,i) {
+      
+      // total commits by author for use in mouseover feature
+      var totalCommits = [];
+
+      // look through master data and tally commit total
+      commits.list.forEach(function(e,f) {
+
+        // if current author = author in commit list, add one
+        if(d == e.author)
+          totalCommits++;
+      })
+
+      // save to array
+      authorTotals[d] = totalCommits;
+    });
+
+  // make legend
+    var legend = svg.selectAll(".legend")
+        .data(commits.authors)
+      .enter().append("g")
+        .attr("class", "legend")
+        .attr("transform", function(d, i) { return "translate(70," + i * 18 + ")"; })
+        .on('mouseover',function(d){
+          // decrease opacity of other rectangles
+          d3.selectAll('rect')
+            .attr('opacity',function(e){
+              if(e.name != d && e != d)
+                return 0.2;
+            });
+
+        /* Show author and commit info on mouseover */
+          // Create the first line with author's name
+          firstLine(d);
+
+          // Create the second line with commit message, send number of commits, from legend flag, and first date of all data
+          secondLine(authorTotals[d], 'legend', dataToUse[0].date);
+
+        })
+        .on('mouseout', function (d) {
+          // Restore opacity to all rectangles on mouseout
+          d3.selectAll('rect')
+            .attr('opacity','1');
+          // Remove name to prepare for next message
+          d3.select('.authName')
+            .remove();
+          // Remove commits to prepare for next message
+          d3.select('.numCommits')
+            .remove();
+        });
+
+    // make color box
+    legend.append("rect")
+        // .data(commits.authors)
+        .attr("x", width - 18)
+        .attr("width", 18)
+        .attr("height", 18)
+        .style("fill", color);
+
+    // make name box
+    legend.append("text")
+        .attr("x", width - 24)
+        .attr("y", 9)
+        .attr("dy", ".35em")
+        .style("text-anchor", "end")
+        .text(function(d) { return d; });
+
+  /* Message boxes */
+    var textAttributes = {
+        x: width/2,
+        y: 60,
+        'text-anchor': 'middle',
+        'font-family': 'sans-serif',
+        'font-size': '16px',
+        'font-weight': 'bold',
+        fill: 'black',
+        'pointer-events': 'none'
+    };
+
+    // Create the first line with author's name
+    function firstLine(name) {
+      d3.select('svg').insert('text','g')
+             .attr('class', 'authName')
+             .attr(textAttributes)
+             .attr('font-size','22px')
+             .text(name);
+    }
+
+    // Create the second line with commit message
+    function secondLine(numCommits,from,date) {
+      d3.select('svg').insert('text','g')
+        .attr('class', 'numCommits')
+        .attr(textAttributes)
+        .text(function(){
+          // format date to mmm dd
+            niceDate = d3.time.format('%b')(date) + " " + d3.time.format('%d')(date);
+          // if mousing over bar
+          if(from == 'bar')
+            // return nice message
+            return 'made ' + numCommits + ' commit(s) around ' + niceDate;
+          // if mousing over legend
+          else
+            return 'has made ' + numCommits + ' commit(s) since ' + niceDate;
+        })
+        .attr('transform', 'translate(0, 25)'); // move down 1 line
+    }
+
+  // button click control
+    d3.select("input[value=\"bootstrap\"]").on("click", function () { setup('twbs/bootstrap'); });
+    d3.select("input[value=\"normalize\"]").on("click", function () { setup('necolas/normalize.css'); });
+    d3.select("input[value=\"d3\"]").on("click", function () { setup('mbostock/d3'); });
+    d3.select("input[value=\"jquery\"]").on("click", function () { setup('jquery/jquery'); });
+    
+  };
+
+</script>
